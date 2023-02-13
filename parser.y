@@ -23,6 +23,7 @@ ofstream logout;
 ofstream parsetree;
 ofstream error;
 ofstream icg;
+//("code.asm", ios::in | ios::out | ios::app)
 ofstream tempicg;
 extern int line_count;
 int err_count = 0;
@@ -32,7 +33,8 @@ vector<pair<string, int>> paramListSizes;
 
 int globalOffset = 2;
 
-string funcs = "new_line proc\n\tpush ax\n\tpush dx\n\tmov ah,2\n\tmov dl,cr\n\tint 21h\n\tmov ah,2\n\tmov dl,lf\n\tint 21h\n\tpop dx\n\tpop ax\n\tret\nnew_line endp\nprint_output proc  ;print what is in ax\n\tpush ax\n\tpush bx\n\tpush cx\n\tpush dx\n\tpush si\n\tlea si,number\n\tmov bx,10\n\tadd si,4\n\tcmp ax,0\n\tjnge negate\n\tprint:\n\txor dx,dx\n\tdiv bx\n\tmov [si],dl\n\tadd [si],'0'\n\tdec si\n\tcmp ax,0\n\tjne print\n\tinc si\n\tlea dx,si\n\tmov ah,9\n\tint 21h\n\tpop si\n\tpop dx\n\tpop cx\n\tpop bx\n\tpop ax\n\tret\n\tnegate:\n\tpush ax\n\tmov ah,2\n\tmov dl,'-'\n\tint 21h\n\tpop ax\n\tneg ax\n\tjmp print\nprint_output endp\n";
+string funcs = "new_line proc\n\tpush ax\n\tpush dx\n\tmov ah,2\n\tmov dl,cr\n\tint 21h\n\tmov ah,2\n\tmov dl,lf\n\tint 21h\n\tpop dx\n\tpop ax\n\tret\nnew_line endp\nPRINT_OUTPUT PROC\n\tPUSH AX\n\tPUSH BX\n\tPUSH CX\n\tPUSH DX\n\n\t; dividend has to be in DX:AX\n\t; divisor in source, CX\n\tMOV CX, 10\n\tXOR BL, BL ; BL will store the length of number\n\tCMP AX, 0\n\tJGE STACK_OP ; number is positive\n\tMOV BH, 1; number is negative\n\tNEG AX\n\nSTACK_OP:\n\tXOR DX, DX\n\tDIV CX\n\t; quotient in AX, remainder in DX\n\tPUSH DX\n\tINC BL ; len++\n\tCMP AX, 0\n\tJG STACK_OP\n\n\tMOV AH, 02\n\tCMP BH, 1 ; if negative, print a '-' sign first\n\tJNE PRINT_LOOP\n    MOV DL, '-'\n\tINT 21H\n\nPRINT_LOOP:\n\tPOP DX\n\tXOR DH, DH\n\tADD DL, '0'\n\tINT 21H\n\tDEC BL\n\tCMP BL, 0\n\tJG PRINT_LOOP\n\n\tPOP DX\n\tPOP CX\n\tPOP BX\n\tPOP AX\n\tRET\nPRINT_OUTPUT ENDP\n";
+
 
 
 void yyerror(char *s)
@@ -364,8 +366,8 @@ func_declaration : type_specifier ID LPAREN parameter_list RPAREN SEMICOLON{
 		;
 		 
 func_definition : type_specifier ID LPAREN parameter_list RPAREN {
-	bool b = checkTable($2);
-	SymbolInfo *temp = table1.LookupCurr($2->getName()); 
+		bool b = checkTable($2);
+		SymbolInfo *temp = table1.LookupCurr($2->getName()); 
 		if(b == true){ 
 			table1.Insert($2->getName(), "ID", "FUNCTION", $1->getDType());
 			if($1->getVoidFlag() == 1){
@@ -402,6 +404,11 @@ func_definition : type_specifier ID LPAREN parameter_list RPAREN {
 					}
 				}
 		}
+		tempicg << $2->getName() << " PROC" << endl;
+		if($2->getName().compare("main") == 0){
+			tempicg << "\tMOV AX, @DATA\n\tMOV DS, AX" << endl;
+		}
+		tempicg << "\tPUSH BP\n\tMOV BP, SP" << endl;
 	} compound_statement{
 			logout << "func_definition : type_specifier ID LPAREN parameter_list RPAREN compound_statement " << endl;
 			
@@ -421,7 +428,8 @@ func_definition : type_specifier ID LPAREN parameter_list RPAREN {
 				$$->setVoidFlag(1);
 			}
 
-			tempicg << $2->getName() << " PROC" << endl;
+			tempicg << "    MOV AX,4CH\n    INT 21H" << endl;
+			tempicg << "\t" << $2->getName() << " ENDP" << endl;
 		}
 		| type_specifier ID LPAREN RPAREN {
 			bool b = checkTable($2); 
@@ -459,6 +467,11 @@ func_definition : type_specifier ID LPAREN parameter_list RPAREN {
 					}
 				}
 			}
+			tempicg << $2->getName() << " PROC" << endl;
+			if($2->getName().compare("main") == 0){
+			tempicg << "\tMOV AX, @DATA\n\tMOV DS, AX" << endl;
+		}
+			tempicg << "\tPUSH BP\n\tMOV BP, SP" << endl;
 			} compound_statement{
 			logout << "func_definition : type_specifier ID LPAREN RPAREN compound_statement" << endl;
 			
@@ -476,7 +489,9 @@ func_definition : type_specifier ID LPAREN parameter_list RPAREN {
 				$$->setVoidFlag(1);
 			}
 
-			tempicg << $2->getName() << " PROC" << endl;
+			//tempicg << $2->getName() << " PROC" << endl;
+			tempicg << "    MOV AX,4CH\n    INT 21H" << endl;
+			tempicg << "\t" << $2->getName() << " ENDP" << endl;
 		}
  		;				
 
@@ -674,12 +689,22 @@ declaration_list : declaration_list COMMA ID{
 
 			if(table1.getCurrScopeID() == 1){
 				icg << "\t" << $3->getName() << " DW 1 DUP (0000H)" << endl;
+				SymbolInfo *temp1 = table1.LookupCurr($3->getName());
+				temp1->globalFlag = 1;
+				$3->globalFlag = 1;
+				temp1->asmName = $3->getName();
 			}
 			else{
 				SymbolInfo *temp1 = table1.LookupCurr($3->getName());
 				temp1->stackOffset = globalOffset;
 				globalOffset += 2;
 				tempicg << "\tSUB SP, 2" << endl;
+				string s = "[BP-" + to_string(temp1->stackOffset) + "]";
+				temp1->asmName = s;
+				//temp1->setName(s);
+				//$3->setName(s);
+				temp1->globalFlag = 0;
+				$3->globalFlag = 0;
 			}
 			
 		}
@@ -756,12 +781,22 @@ declaration_list : declaration_list COMMA ID{
 
 			if(table1.getCurrScopeID() == 1){
 				icg << "\t" << $1->getName() << " DW 1 DUP (0000H)" << endl;
+				SymbolInfo *temp1 = table1.LookupCurr($1->getName());
+				temp1->globalFlag = 1;
+				$1->globalFlag = 1;
+				temp1->asmName = $1->getName();
 			}
 			else{
 				SymbolInfo *temp1 = table1.LookupCurr($1->getName());
 				temp1->stackOffset = globalOffset;
 				globalOffset += 2;
 				tempicg << "\tSUB SP, 2" << endl;
+				string s = "[BP-" + to_string(temp1->stackOffset) + "]";
+				temp1->asmName = s;
+				//temp1->setName(s);
+				//$1->setName(s);
+				temp1->globalFlag = 0;
+				$1->globalFlag = 0;
 			}
 		}
 		| ID LTHIRD CONST_INT RTHIRD{
@@ -973,6 +1008,16 @@ statement : var_declaration{
 			// else{
 			// 	$$->setDType($3->getDType());
 			// }
+
+
+			tempicg << "\tMOV AX, " << temp->asmName << "\n\tCALL print_output\n\tCALL new_line\n";
+			// if(temp->globalFlag == 0){
+			// 	string s = "[BP-" + to_string(temp->stackOffset) + "]";
+			// 	tempicg << "\tMOV AX, " << s << "\n\tCALL print_output\n\tCALL new_line\n";
+			// }
+			// else{
+			// 	tempicg << "\tMOV AX, " << $3->getName() << "\n\tCALL print_output\n\tCALL new_line\n";
+			// }
 		}
 		| RETURN expression SEMICOLON{
 			logout << "statement : RETURN expression SEMICOLON" << endl;
@@ -1041,6 +1086,17 @@ variable : ID{
 			else{
 				$$->setDType(temp->getDType());
 			}
+
+			// if(temp->globalFlag == 1){
+			// 	$$->setName($1->getName());
+			// }
+			// else{
+			// 	string s = "[BP-" + to_string(temp->stackOffset) + "]";
+			// 	$$->setName(s);
+			// }
+
+			$$->asmName = temp->asmName;
+			$$->setType("CONST_INT");
 		} 		
 		| ID LTHIRD expression RTHIRD {
 			logout << "variable : ID LSQUARE expression RSQUARE  	 " << endl;
@@ -1096,6 +1152,9 @@ variable : ID{
 			if(b == false){
 				checkZero($$, $1);
 			}
+
+			$$->setType($1->getType());
+			$$->asmName = $1->asmName;
  		}
 	   	| variable ASSIGNOP logic_expression{
 			logout << "expression 	: variable ASSIGNOP logic_expression 		 " << endl;
@@ -1130,7 +1189,12 @@ variable : ID{
 			// error << "Line# " << line_count << ": Warning: possible loss of data in assignment of FLOAT to INT" << endl;
 			// err_count++;
 			// return true;
-	
+
+			if($3->getType().compare("CONST_INT") == 0){
+				tempicg << "\tMOV AX, " << $3->asmName << endl;
+			}
+			tempicg << "\tMOV " << $1->asmName << ", AX" << endl;
+			tempicg << "\tPUSH AX\n\tPOP AX" << endl;
 		} 	
 	   	;
 			
@@ -1149,6 +1213,9 @@ logic_expression : rel_expression 	{
 				$$->setDType($1->getDType());
 				checkZero($$, $1);
 			}
+
+			$$->setType($1->getType());
+			$$->asmName = $1->asmName;
 		}
 		| rel_expression LOGICOP rel_expression {
 			logout << "logic_expression : rel_expression LOGICOP rel_expression 	 	 " << endl;
@@ -1189,6 +1256,9 @@ rel_expression	: simple_expression {
 				$$->setDType($1->getDType());
 				checkZero($$, $1);
 			}
+
+			$$->setType($1->getType());
+			$$->asmName = $1->asmName;
 		}
 		| simple_expression RELOP simple_expression{
 			logout << "rel_expression	: simple_expression RELOP simple_expression	  " << endl;
@@ -1231,6 +1301,9 @@ simple_expression : term {
 				checkZero($$, $1);
 			}
 			//voidError($1);
+
+			$$->setType($1->getType());
+			$$->asmName = $1->asmName;
 		}
 		| simple_expression ADDOP term {
 			logout << "simple_expression : simple_expression ADDOP term  " << endl;
@@ -1256,6 +1329,40 @@ simple_expression : term {
 			else{
 				intToFloat($$, $1, $3);
 			}
+
+			if($3->getType().compare("CONST_INT") == 0 && $1->getType().compare("CONST_INT") == 0){
+				tempicg << "\tMOV AX, " << $3->asmName << endl;
+				tempicg << "\tMOV DX, AX" << endl;
+				tempicg << "\tMOV AX, " << $1->asmName << endl;
+				
+			}
+			else if($3->getType().compare("CONST_INT") == 0 && $1->getType().compare("CONST_INT") != 0){
+				tempicg << "\tMOV DX, AX" << endl;
+				tempicg << "\tMOV AX, " << $3->asmName << endl;
+				//tempicg << "\tMOV AX, " << $1->asmName << endl;
+			}
+			else if($3->getType().compare("CONST_INT") != 0 && $1->getType().compare("CONST_INT") == 0){
+				//tempicg << "\tMOV AX, " << $3->asmName << endl;
+				tempicg << "\tMOV DX, AX" << endl;
+				tempicg << "\tMOV AX, " << $1->asmName << endl;
+			}
+			else{}
+
+			//tempicg << "\tMOV AX, " << $3->asmName << endl;
+			// tempicg << "\tMOV DX, AX" << endl;
+			// if($1->getType().compare("CONST_INT") == 0){
+			// 	tempicg << "\tMOV AX, " << $1->asmName << endl;
+			// }
+			// //tempicg << "\tMOV AX, " << $1->asmName << endl;
+			
+			if($2->getName().compare("+") == 0){
+				tempicg << "\tADD AX, DX" << endl; //AX + DX
+				tempicg << "\tPUSH AX\n\tPOP AX" << endl;
+			}
+			else if($2->getName().compare("-") == 0){ 
+				tempicg << "\tSUB AX, DX" << endl; //AX + DX
+				tempicg << "\tPUSH AX\n\tPOP AX" << endl;
+			}
 		}
 		;
 					
@@ -1274,6 +1381,9 @@ term :	unary_expression{
 
 			checkZero($$, $1);
 			//voidError($1);
+
+			$$->setType($1->getType());
+			$$->asmName = $1->asmName;
 		}
 		|  term MULOP unary_expression{
 			logout << "term :	term MULOP unary_expression " << endl;
@@ -1311,6 +1421,30 @@ term :	unary_expression{
 						intToFloat($$, $1, $3);
 					}
 			}
+
+			if($3->getType().compare("CONST_INT") == 0){
+				tempicg << "\tMOV AX, " << $3->asmName << endl;
+			}
+			//tempicg << "\tMOV AX, " << $3->asmName << endl;
+			tempicg << "\tMOV CX, AX" << endl;
+			if($1->getType().compare("CONST_INT") == 0){
+				tempicg << "\tMOV AX, " << $1->asmName << endl;
+			}
+			//tempicg << "\tMOV AX, " << $1->asmName << endl;
+			tempicg << "\tCWD" << endl;
+			if($2->getName().compare("*") == 0){
+				tempicg << "\tMUL CX" << endl; //AX * CX
+				tempicg << "\tPUSH AX\n\tPOP AX" << endl;
+			}
+			else if($2->getName().compare("%") == 0){ 
+				tempicg << "\tDIV CX" << endl; //AX/CX
+				tempicg << "\tPUSH DX\n\tPOP AX" << endl;
+			}
+			else if($2->getName().compare("/") == 0){ 
+				//tempicg << "\tDIV CX" << endl; //AX/CX
+				//tempicg << "\tPUSH DX\n\tPOP AX" << endl;
+			}
+			//$$->setType($1->getType());
 		}
 		;
 
@@ -1364,6 +1498,9 @@ unary_expression : ADDOP unary_expression{
 			}
 
 			checkZero($$, $1);
+
+			$$->setType($1->getType());
+			$$->asmName = $1->asmName;
 		}
 		;
 	
@@ -1380,6 +1517,9 @@ factor	: variable {
 				$$->setDType($1->getDType());
 			}
 			//$$->setDType($1->getDType());
+
+			$$->asmName = $1->asmName;
+			$$->setType("CONST_INT");
 		}
 
 		//NOT DONE YET (function call)
@@ -1478,6 +1618,11 @@ factor	: variable {
 				$1->setZeroFlag(1);
 			}
 			checkZero($$, $1);
+
+			//tempicg << "\tMOV AX, " << $1->getName() << endl;
+			//tempicg << "\tPUSH AX" << endl;
+			//$$->setType($1->getType());
+			$$->asmName = $1->getName();
 		}
 		| CONST_FLOAT{
 			logout << "factor	: CONST_FLOAT   " << endl;
@@ -1587,7 +1732,7 @@ int main(int argc,char *argv[])
     icg.open("code.asm");
 	tempicg.open("temp.asm");
 
-	string str = ".MODEL SMALL\n.STACK 1000H\n.DATA";
+	string str = ".MODEL SMALL\n.STACK 1000H\n.Data";
 	icg << str << endl;
 	icg << "\tCR EQU 0DH\n\tLF EQU 0AH\n\tnumber DB \"00000$\"" << endl;
 	tempicg << ".CODE" << endl;
@@ -1600,13 +1745,30 @@ int main(int argc,char *argv[])
 	tempicg << funcs;
 	tempicg << "END main" << endl;
 
+	/* ifstream obj("temp.asm", ios::in);
+	string line;
+	while(getline(obj, line) && obj.eof() == 0){
+		icg << line << endl;
+	}  */
 	fclose(yyin);
 	/* logout.close();
 	parsetree.close();
 	error.close(); */
+
+	ifstream obj("temp.asm");
+
+	icg << obj.rdbuf();
+
     icg.close();
 	tempicg.close();
 	/* fclose(fp3); */
+	
+	/* ifstream ifile("code.asm", ios::in);
+ 	
+	ofstream ofile("temp.asm", ios::out | ios::app);
+
+	tempicg.open("temp.asm"); */
+
 	
 	return 0;
 }
