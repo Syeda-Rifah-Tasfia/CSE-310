@@ -18,6 +18,7 @@ string d_type = "";
 int id = 1;
 int yyparse(void);
 int yylex(void);
+int labelCount = 1;
 extern FILE *yyin;
 ofstream logout;
 ofstream parsetree;
@@ -70,6 +71,11 @@ void insertParams(){
 		}
 		s->clearParam();
 	}
+}
+
+void newLabel(){
+	tempicg << "L" << labelCount << ":" << endl;
+	labelCount++;
 }
 
 // void printParams(){
@@ -611,6 +617,7 @@ var_declaration : type_specifier declaration_list SEMICOLON {
 			$$->sentence += $$->getName() + " : " + $$->getType();
 			
 			$$->setDType($1->getDType());
+
 		}
  		;
  		 
@@ -1011,13 +1018,8 @@ statement : var_declaration{
 
 
 			tempicg << "\tMOV AX, " << temp->asmName << "\n\tCALL print_output\n\tCALL new_line\n";
-			// if(temp->globalFlag == 0){
-			// 	string s = "[BP-" + to_string(temp->stackOffset) + "]";
-			// 	tempicg << "\tMOV AX, " << s << "\n\tCALL print_output\n\tCALL new_line\n";
-			// }
-			// else{
-			// 	tempicg << "\tMOV AX, " << $3->getName() << "\n\tCALL print_output\n\tCALL new_line\n";
-			// }
+			
+			newLabel();
 		}
 		| RETURN expression SEMICOLON{
 			logout << "statement : RETURN expression SEMICOLON" << endl;
@@ -1190,11 +1192,14 @@ variable : ID{
 			// err_count++;
 			// return true;
 
-			if($3->getType().compare("CONST_INT") == 0){
-				tempicg << "\tMOV AX, " << $3->asmName << endl;
-			}
+			// if($3->getType().compare("CONST_INT") == 0){
+			// 	tempicg << "\tMOV AX, " << $3->asmName << endl;
+			// }
 			tempicg << "\tMOV " << $1->asmName << ", AX" << endl;
-			tempicg << "\tPUSH AX\n\tPOP AX" << endl;
+			tempicg << "\tPUSH AX" << endl;
+			tempicg << "\tPOP AX" << endl;
+
+			newLabel();
 		} 	
 	   	;
 			
@@ -1330,26 +1335,29 @@ simple_expression : term {
 				intToFloat($$, $1, $3);
 			}
 
-			if($3->getType().compare("CONST_INT") == 0 && $1->getType().compare("CONST_INT") == 0){
-				tempicg << "\tMOV AX, " << $3->asmName << endl;
-				tempicg << "\tMOV DX, AX" << endl;
-				tempicg << "\tMOV AX, " << $1->asmName << endl;
+			// if($3->getType().compare("CONST_INT") == 0 && $1->getType().compare("CONST_INT") == 0){
+			// 	tempicg << "\tMOV AX, " << $3->asmName << endl;
+			// 	tempicg << "\tMOV DX, AX" << endl;
+			// 	tempicg << "\tMOV AX, " << $1->asmName << endl;
 				
-			}
-			else if($3->getType().compare("CONST_INT") == 0 && $1->getType().compare("CONST_INT") != 0){
-				tempicg << "\tMOV DX, AX" << endl;
-				tempicg << "\tMOV AX, " << $3->asmName << endl;
-				//tempicg << "\tMOV AX, " << $1->asmName << endl;
-			}
-			else if($3->getType().compare("CONST_INT") != 0 && $1->getType().compare("CONST_INT") == 0){
-				//tempicg << "\tMOV AX, " << $3->asmName << endl;
-				tempicg << "\tMOV DX, AX" << endl;
-				tempicg << "\tMOV AX, " << $1->asmName << endl;
-			}
-			else{}
+			// }
+			// else if($3->getType().compare("CONST_INT") == 0 && $1->getType().compare("CONST_INT") != 0){
+			// 	tempicg << "\tMOV DX, AX" << endl;
+			// 	tempicg << "\tMOV AX, " << $3->asmName << endl;
+			// 	//tempicg << "\tMOV AX, " << $1->asmName << endl;
+			// }
+			// else if($3->getType().compare("CONST_INT") != 0 && $1->getType().compare("CONST_INT") == 0){
+			// 	//tempicg << "\tMOV AX, " << $3->asmName << endl;
+			// 	tempicg << "\tMOV DX, AX" << endl;
+			// 	tempicg << "\tMOV AX, " << $1->asmName << endl;
+			// }
+			// else{}
+
+			tempicg << "\tPOP AX" << endl;
+			tempicg << "\tMOV DX, AX" << endl;
+			tempicg << "\tPOP AX" << endl;
 
 			//tempicg << "\tMOV AX, " << $3->asmName << endl;
-			// tempicg << "\tMOV DX, AX" << endl;
 			// if($1->getType().compare("CONST_INT") == 0){
 			// 	tempicg << "\tMOV AX, " << $1->asmName << endl;
 			// }
@@ -1357,12 +1365,13 @@ simple_expression : term {
 			
 			if($2->getName().compare("+") == 0){
 				tempicg << "\tADD AX, DX" << endl; //AX + DX
-				tempicg << "\tPUSH AX\n\tPOP AX" << endl;
 			}
 			else if($2->getName().compare("-") == 0){ 
-				tempicg << "\tSUB AX, DX" << endl; //AX + DX
-				tempicg << "\tPUSH AX\n\tPOP AX" << endl;
+				tempicg << "\tSUB AX, DX" << endl; //AX - DX
+				//tempicg << "\tPUSH AX\n\tPOP AX" << endl;
 			}
+
+			tempicg << "\tPUSH AX" << endl;
 		}
 		;
 					
@@ -1422,29 +1431,24 @@ term :	unary_expression{
 					}
 			}
 
-			if($3->getType().compare("CONST_INT") == 0){
-				tempicg << "\tMOV AX, " << $3->asmName << endl;
-			}
-			//tempicg << "\tMOV AX, " << $3->asmName << endl;
+
+			tempicg << "\tPOP AX" << endl;
 			tempicg << "\tMOV CX, AX" << endl;
-			if($1->getType().compare("CONST_INT") == 0){
-				tempicg << "\tMOV AX, " << $1->asmName << endl;
-			}
-			//tempicg << "\tMOV AX, " << $1->asmName << endl;
+			tempicg << "\tPOP AX" << endl;
 			tempicg << "\tCWD" << endl;
 			if($2->getName().compare("*") == 0){
 				tempicg << "\tMUL CX" << endl; //AX * CX
-				tempicg << "\tPUSH AX\n\tPOP AX" << endl;
+				tempicg << "\tPUSH AX" << endl;
 			}
 			else if($2->getName().compare("%") == 0){ 
 				tempicg << "\tDIV CX" << endl; //AX/CX
-				tempicg << "\tPUSH DX\n\tPOP AX" << endl;
+				tempicg << "\tMOV AX, DX" << endl;
+				tempicg << "\tPUSH AX" << endl;
 			}
 			else if($2->getName().compare("/") == 0){ 
-				//tempicg << "\tDIV CX" << endl; //AX/CX
-				//tempicg << "\tPUSH DX\n\tPOP AX" << endl;
+				tempicg << "\tDIV CX" << endl; //AX/CX
+				tempicg << "\tPUSH AX" << endl;
 			}
-			//$$->setType($1->getType());
 		}
 		;
 
@@ -1520,9 +1524,10 @@ factor	: variable {
 
 			$$->asmName = $1->asmName;
 			$$->setType("CONST_INT");
+			tempicg << "\tMOV AX, " << $1->asmName << endl;
+			tempicg << "\tPUSH AX" << endl;
 		}
 
-		//NOT DONE YET (function call)
 		| ID LPAREN argument_list RPAREN{
 			logout << "factor	: ID LPAREN argument_list RPAREN  " << endl;
 			$$ = new SymbolInfo("factor", "ID LPAREN argument_list RPAREN");
@@ -1536,7 +1541,6 @@ factor	: variable {
 			$$->sentence += $$->getName() + " : " + $$->getType();
 			
 			SymbolInfo *temp = table1.Lookup($1->getName());
-			//SymbolInfo *temp1 = table1.LookupCurr($1->getName());
 			if(temp == nullptr){
 				error << "Line# " << line_count << ": Undeclared function '" << $1->getName() <<"'" << endl;
 				err_count++;
@@ -1546,23 +1550,15 @@ factor	: variable {
 				if(temp->getDType().compare("VOID") == 0){
 					$1->setVoidFlag(1);
 					$$->setVoidFlag(1); //means $$ has a void somewhere in it 
-					// error << "Line# " << line_count << ": Void cannot be used in expression " << endl;
-					// err_count++;
 				}
 				else{
 					$$->setDType($1->getDType());
 				}
 
-				//error << temp->getName() << " " << temp->getType() << " " << temp->getType1() << " " << temp->getDType() << endl;
+				
 				
 				{
-					// int size;
-					// for(int i = 0; i < paramListSizes.size(); i++){
-					// 	if(paramListSizes[i].first.compare($1->getName()) == 0){
-					// 		size = paramListSizes[i].second;
-					// 	}
-					// }
-					//error << "arg: " << argList.size() << " params: " << temp->params.size() << endl;
+					
 					if(argList.size() < temp->params.size()){
 						error << "Line# " << line_count << ": Too few arguments to function '" << $1->getName() <<"'" << endl;
 						err_count++;
@@ -1619,8 +1615,8 @@ factor	: variable {
 			}
 			checkZero($$, $1);
 
-			//tempicg << "\tMOV AX, " << $1->getName() << endl;
-			//tempicg << "\tPUSH AX" << endl;
+			tempicg << "\tMOV AX, " << $1->getName() << endl;
+			tempicg << "\tPUSH AX" << endl;
 			//$$->setType($1->getType());
 			$$->asmName = $1->getName();
 		}
