@@ -19,6 +19,10 @@ public:
     string sentence;
     vector<SymbolInfo*> children;
     vector<SymbolInfo> params;
+    vector<int> truelist;
+    vector<int> falselist;
+    vector<int> nextlist;
+    string label;
     int paramListSize;
     int stackOffset;
     int globalFlag;
