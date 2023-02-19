@@ -18,13 +18,11 @@ string d_type = "";
 int id = 1;
 int yyparse(void);
 int yylex(void);
-int labelCount = 1;
 extern FILE *yyin;
 ofstream logout;
 ofstream parsetree;
 ofstream error;
 ofstream icg;
-int asmLineCount = 0;
 //("code.asm", ios::in | ios::out | ios::app)
 ofstream tempicg;
 extern int line_count;
@@ -35,6 +33,9 @@ vector<pair<string, int>> paramListSizes;
 unordered_map<int, string> umap;
 
 int globalOffset = 0;
+int labelCount = 1;
+int asmLineCount = 0;
+string label;
 
 string funcs = "new_line proc\n\tpush ax\n\tpush dx\n\tmov ah,2\n\tmov dl,cr\n\tint 21h\n\tmov ah,2\n\tmov dl,lf\n\tint 21h\n\tpop dx\n\tpop ax\n\tret\nnew_line endp\nPRINT_OUTPUT PROC\n\tPUSH AX\n\tPUSH BX\n\tPUSH CX\n\tPUSH DX\n\n\t; dividend has to be in DX:AX\n\t; divisor in source, CX\n\tMOV CX, 10\n\tXOR BL, BL ; BL will store the length of number\n\tCMP AX, 0\n\tJGE STACK_OP ; number is positive\n\tMOV BH, 1; number is negative\n\tNEG AX\n\nSTACK_OP:\n\tXOR DX, DX\n\tDIV CX\n\t; quotient in AX, remainder in DX\n\tPUSH DX\n\tINC BL ; len++\n\tCMP AX, 0\n\tJG STACK_OP\n\n\tMOV AH, 02\n\tCMP BH, 1 ; if negative, print a '-' sign first\n\tJNE PRINT_LOOP\n    MOV DL, '-'\n\tINT 21H\n\nPRINT_LOOP:\n\tPOP DX\n\tXOR DH, DH\n\tADD DL, '0'\n\tINT 21H\n\tDEC BL\n\tCMP BL, 0\n\tJG PRINT_LOOP\n\n\tPOP DX\n\tPOP CX\n\tPOP BX\n\tPOP AX\n\tRET\nPRINT_OUTPUT ENDP\n";
 
@@ -215,7 +216,7 @@ void intToFloat(SymbolInfo* s0, SymbolInfo* s1, SymbolInfo* s2){
 %token<table>LOGICOP
 
 %type<table> start program unit var_declaration func_declaration func_definition type_specifier parameter_list 
-%type<table> compound_statement M statements statement expression_statement expression logic_expression rel_expression 
+%type<table> compound_statement M N statements statement expression_statement expression logic_expression rel_expression 
 %type<table> simple_expression term unary_expression factor variable argument_list arguments non_array_subscript declaration_list
 %nonassoc LOWER_THAN_ELSE
 %nonassoc ELSE
@@ -621,6 +622,10 @@ compound_statement : LCURL {table1.enterScope(id++); insertParams();} statements
 
 			table1.printAll(logout);
 			table1.exitScope();
+
+			for(int i = 0; i < $3->nextlist.size(); i++){
+				$$->nextlist.push_back($3->nextlist[i]);
+			}
 		}
  		| LCURL {table1.enterScope(id++); insertParams();} RCURL{
 			logout << "compound_statement : LCURL RCURL  " << endl;
@@ -892,39 +897,58 @@ declaration_list : declaration_list COMMA ID{
 non_array_subscript : CONST_FLOAT{}
 		| ID{}
 
+
+M 	: 	{
+			label = "L" + to_string(labelCount);
+			labelCount++;
+			$$ = new SymbolInfo();
+			$$->label = label;
+			tempicg << label << ":" << endl;
+			asmLineCount++;
+		}
+		;	   
+
+N   :   {
+			tempicg << "\tJMP " << endl;
+			asmLineCount++;
+			$$->nextlist.push_back(asmLineCount);
+		}
+		;
+
 statements : statement{
 			logout << "statements : statement  " << endl;
 
 			$$ = new SymbolInfo("statements", "statement");
-			$$->children.push_back($1);
-			$$->setStart($1->getStart());
-			$$->setFinish($1->getFinish());
-			$$->sentence += $$->getName() + " : " + $$->getType();
-			
-			$$->setDType($1->getDType());
+		
+
+			for(int i = 0; i < $1->nextlist.size(); i++){
+				$$->nextlist.push_back($1->nextlist[i]);
+			}
+
+			for(int i = 0; i < $1->truelist.size(); i++){
+				$$->truelist.push_back($1->truelist[i]);
+			}
+
+			for(int i = 0; i < $1->falselist.size(); i++){
+				$$->falselist.push_back($1->falselist[i]);
+			}
 		}
-		| statements statement{
+		| statements M statement{
 			logout << "statements : statements statement  " << endl;
 
-			$$ = new SymbolInfo("statements", "statements statement");
-			$$->children.push_back($1);
-			$$->children.push_back($2);
-			$$->setStart($1->getStart());
-			$$->setFinish($2->getFinish());
-			$$->sentence += $$->getName() + " : " + $$->getType();
-			//$$->sentence += $$->getName() + " : " + $1->getName() + " " + $2->getName();
+			backpatch($1->nextlist, $2->label);
+			// tempicg << $2->label << ":" << endl;
+			// asmLineCount++;
+
+			for(int i = 0; i < $3->nextlist.size(); i++){
+				$$->nextlist.push_back($3->nextlist[i]);
+			}
+
+			
 		}
 	   ;
 	   
-M 	: 	{
-			string s = "L" + to_string(labelCount);
-			labelCount++;
-			$$ = new SymbolInfo();
-			$$->label = s;
-			//tempicg << s << ":" << endl;
-			//asmLineCount++;
-	}
-	;	   
+
 statement : var_declaration{
 			logout << "statement : var_declaration " << endl;
 
@@ -952,77 +976,83 @@ statement : var_declaration{
 			if($1->getVoidFlag() == 1){
 				$$->setVoidFlag(1);
 			}
+
+			//tempicg << label << ":" << endl;
+			for(int i = 0; i < $1->nextlist.size(); i++){
+				$$->nextlist.push_back($1->nextlist[i]);
+			}
+
+			for(int i = 0; i < $1->truelist.size(); i++){
+				$$->truelist.push_back($1->truelist[i]);
+			}
+
+			for(int i = 0; i < $1->falselist.size(); i++){
+				$$->falselist.push_back($1->falselist[i]);
+			}
 		}
 		| compound_statement{
 			logout << "statement : compound_statement " << endl;
 
 			$$ = new SymbolInfo("statement", "compound_statement");
-			$$->children.push_back($1);
-			$$->setStart($1->getStart());
-			$$->setFinish($1->getFinish());
-			$$->sentence += $$->getName() + " : " + $$->getType();
 			
-			if($1->getVoidFlag() == 1){
-				$$->setVoidFlag(1);
+			//tempicg << label << ":" << endl;
+			for(int i = 0; i < $1->nextlist.size(); i++){
+				$$->nextlist.push_back($1->nextlist[i]);
+			}
+
+			for(int i = 0; i < $1->truelist.size(); i++){
+				$$->truelist.push_back($1->truelist[i]);
+			}
+
+			for(int i = 0; i < $1->falselist.size(); i++){
+				$$->falselist.push_back($1->falselist[i]);
 			}
 		}
 		| FOR LPAREN expression_statement expression_statement expression RPAREN statement{
 			logout << "statement : FOR LPAREN expression_statement expression_statement expression RPAREN statement" << endl;
 
 			$$ = new SymbolInfo("statement", "FOR LPAREN expression_statement expression_statement expression RPAREN statement");
-			$$->children.push_back($1);
-			$$->children.push_back($2);
-			$$->children.push_back($3);
-			$$->children.push_back($4);
-			$$->children.push_back($5);
-			$$->children.push_back($6);
-			$$->children.push_back($7);
-			$$->setStart($1->getStart());
-			$$->setFinish($7->getFinish());
-			$$->sentence += $$->getName() + " : " + $$->getType();
 			
-			if($3->getVoidFlag() == 1 || $4->getVoidFlag() == 1 || $5->getVoidFlag() == 1 || $7->getVoidFlag() == 1){
-				$$->setVoidFlag(1);
-			}
 		}
-		| IF LPAREN expression RPAREN statement %prec LOWER_THAN_ELSE{
+		| IF LPAREN expression RPAREN M statement %prec LOWER_THAN_ELSE{
 			//M {/*tempicg << $5->label << ":" << endl; asmLineCount++;*/ }
 			logout << "statement : IF LPAREN expression RPAREN statement " << endl;
 
 			$$ = new SymbolInfo("statement", "IF LPAREN expression RPAREN statement");	
-			// $$->children.push_back($1);
-			// $$->children.push_back($2);
-			// $$->children.push_back($3);
-			// $$->children.push_back($4);
-			// $$->children.push_back($5);
-			// $$->setStart($1->getStart());
-			// $$->setFinish($7->getFinish());
-			// $$->sentence += $$->getName() + " : " + $$->getType();
 			
-			// if($3->getVoidFlag() == 1 || $7->getVoidFlag() == 1){
-			// 	$$->setVoidFlag(1);
-			// }
+			//$6->label = $5->label;
 
+			backpatch($3->truelist, $5->label);
+			for(int i = 0; i < $3->falselist.size(); i++){
+				$$->nextlist.push_back($3->falselist[i]);
+			}
+
+			for(int i = 0; i < $6->nextlist.size(); i++){
+				$$->nextlist.push_back($6->nextlist[i]);
+			} 
 
 		}
-		| IF LPAREN expression RPAREN statement ELSE statement{
+		| IF LPAREN expression RPAREN M statement ELSE N M statement{
 			logout << "statement : IF LPAREN expression RPAREN statement ELSE statement " << endl;
 
 			$$ = new SymbolInfo("statement", "IF LPAREN expression RPAREN statement ELSE statement");	
-			$$->children.push_back($1);
-			$$->children.push_back($2);
-			$$->children.push_back($3);
-			$$->children.push_back($4);
-			$$->children.push_back($5);
-			$$->children.push_back($6);
-			$$->children.push_back($7);
-			$$->setStart($1->getStart());
-			$$->setFinish($7->getFinish());
-			$$->sentence += $$->getName() + " : " + $$->getType();
+
+			backpatch($3->truelist, $5->label);
+			backpatch($3->falselist, $9->label);
 			
-			if($3->getVoidFlag() == 1 || $5->getVoidFlag() == 1 || $7->getVoidFlag() == 1){
-				$$->setVoidFlag(1);
+
+			for(int i = 0; i < $6->nextlist.size(); i++){
+				$$->nextlist.push_back($6->nextlist[i]);
 			}
+
+			for(int i = 0; i < $8->nextlist.size(); i++){
+				$$->nextlist.push_back($8->nextlist[i]);
+			}
+
+			for(int i = 0; i < $10->nextlist.size(); i++){
+				$$->nextlist.push_back($10->nextlist[i]);
+			}
+			
 		}
 		| WHILE LPAREN expression RPAREN statement{
 			logout << "statement : WHILE LPAREN expression RPAREN statement" << endl;
@@ -1064,11 +1094,12 @@ statement : var_declaration{
 			// }
 
 			//newLabel();
-
+			//string s = 
+			//tempicg << label << ":" << endl;
+			//asmLineCount++;
+			//backpatch($$->nextlist, label);
 			tempicg << "\tMOV AX, " << temp->asmName << "\n\tCALL print_output\n\tCALL new_line\n";
-			asmLineCount++;
-			asmLineCount++;
-			asmLineCount++;
+			asmLineCount += 3;
 			
 		}
 		| RETURN expression SEMICOLON{
@@ -1112,6 +1143,18 @@ expression_statement : SEMICOLON{
 			if(b == true){
 				// error << "Line# " << line_count << ": Void cannot be used in expression " << endl;
 				// err_count++;
+			}
+
+			for(int i = 0; i < $1->nextlist.size(); i++){
+				$$->nextlist.push_back($1->nextlist[i]);
+			}
+
+			for(int i = 0; i < $1->truelist.size(); i++){
+				$$->truelist.push_back($1->truelist[i]);
+			}
+
+			for(int i = 0; i < $1->falselist.size(); i++){
+				$$->falselist.push_back($1->falselist[i]);
 			}
 		} 
 		;
@@ -1211,6 +1254,16 @@ variable : ID{
 			for(int i = 0; i < $1->nextlist.size(); i++){
 				$$->nextlist.push_back($1->nextlist[i]);
 			}
+
+			for(int i = 0; i < $1->truelist.size(); i++){
+				$$->truelist.push_back($1->truelist[i]);
+			}
+
+			for(int i = 0; i < $1->falselist.size(); i++){
+				$$->falselist.push_back($1->falselist[i]);
+			}
+
+			$$->asmFlag = $1->asmFlag;
  		}
 	   	| variable ASSIGNOP logic_expression{
 			logout << "expression 	: variable ASSIGNOP logic_expression 		 " << endl;
@@ -1241,16 +1294,63 @@ variable : ID{
 				}
 			}
 
-			// if(s1->getDType().compare("INT") == 0 && s2->getDType().compare("FLOAT") == 0){
-			// error << "Line# " << line_count << ": Warning: possible loss of data in assignment of FLOAT to INT" << endl;
-			// err_count++;
-			// return true;
+			
+			//string s = newLabel();
+			// tempicg << label << ":" << endl;
+			// asmLineCount++;
+			if($3->asmFlag == 1){
+				string s = newLabel();
+				backpatch($3->truelist, s);
+			
+				tempicg << "\tMOV AX, 1" << endl;
+				asmLineCount++;
+				tempicg << "\tJMP " << endl;
+				asmLineCount++;
+				$3->nextlist.push_back(asmLineCount);
 
-			// if($3->getType().compare("CONST_INT") == 0){
-			// 	tempicg << "\tMOV AX, " << $3->asmName << endl;
-			// }
+				s = newLabel();
+				backpatch($3->falselist, s);
+				tempicg << "\tMOV AX, 0" << endl;
+				asmLineCount++;
+
+				// tempicg << "\tPUSH AX" << endl;
+				// asmLineCount++;
+			}
+			else if($3->asmFlag == 2){
+				string s = newLabel();
+				// tempicg << "\tPOP AX" << endl;
+				// asmLineCount++;
+				// tempicg << "\tCMP AX, 0" << endl;
+				// asmLineCount++;
+				// tempicg << "\tJNE " << endl;
+				// asmLineCount++;
+				// $3->truelist.push_back(asmLineCount);
+
+				// tempicg << "\tJMP " << endl;
+				// asmLineCount++;
+				// $3->falselist.push_back(asmLineCount);
+
+				backpatch($3->truelist, s);
+			
+				tempicg << "\tMOV AX, 1" << endl;
+				asmLineCount++;
+				tempicg << "\tJMP " << endl;
+				asmLineCount++;
+				$3->nextlist.push_back(asmLineCount);
+
+				s = newLabel();
+				backpatch($3->falselist, s);
+				tempicg << "\tMOV AX, 0" << endl;
+				asmLineCount++;
+
+				// tempicg << "\tPUSH AX" << endl;
+				// asmLineCount++;
+			}
+
 			string s = newLabel();
 			backpatch($3->nextlist, s);
+
+			
 			tempicg << "\tMOV " << $1->asmName << ", AX" << endl;
 			asmLineCount++;
 			tempicg << "\tPUSH AX" << endl;
@@ -1283,106 +1383,117 @@ logic_expression : rel_expression 	{
 			for(int i = 0; i < $1->nextlist.size(); i++){
 				$$->nextlist.push_back($1->nextlist[i]);
 			}
+
+			for(int i = 0; i < $1->truelist.size(); i++){
+				$$->truelist.push_back($1->truelist[i]);
+			}
+
+			for(int i = 0; i < $1->falselist.size(); i++){
+				$$->falselist.push_back($1->falselist[i]);
+			}
+
+			$$->asmFlag = $1->asmFlag;
 		}
-		| rel_expression LOGICOP M rel_expression {
+		| rel_expression {
+				if($1->asmFlag == 0){
+					string s = newLabel();
+					tempicg << "\tPOP AX" << endl;
+					asmLineCount++;
+					tempicg << "\tCMP AX, 0" << endl;
+					asmLineCount++;
+					tempicg << "\tJNE " << endl;
+					asmLineCount++;
+					$1->truelist.push_back(asmLineCount);
+
+					tempicg << "\tJMP " << endl;
+					asmLineCount++;
+					$1->falselist.push_back(asmLineCount);
+				}
+				else{
+					tempicg << "\tPUSH AX" << endl;
+					asmLineCount++;
+				}
+			} LOGICOP M rel_expression {
 			logout << "logic_expression : rel_expression LOGICOP rel_expression 	 	 " << endl;
 			$$ = new SymbolInfo("logic_expression", "rel_expression LOGICOP rel_expression");
-			$$->children.push_back($1);
-			$$->children.push_back($2);
-			$$->children.push_back($4);
-			$$->setStart($1->getStart());
-			$$->setFinish($4->getFinish());
-			$$->sentence += $$->getName() + " : " + $$->getType();
+	
+
+			//newLabel();
 			
-			if($1->getVoidFlag() == 1 || $4->getVoidFlag() == 1){
-				$$->setVoidFlag(1);
-				// $1->setVoidFlag(1);
-				// $3->setVoidFlag(1);
-			}
-			else if($1->getZeroFlag() == 1 && $4->getZeroFlag() == 1){
-				$$->setZeroFlag(1);
-				$$->setDType("INT");
-			}
+			
+
+			if($5->asmFlag == 0){
+				string s = newLabel();
+				tempicg << "\tPOP AX" << endl;
+				asmLineCount++;
+				tempicg << "\tCMP AX, 0" << endl;
+				asmLineCount++;
+				tempicg << "\tJNE " << endl;
+				asmLineCount++;
+				$5->truelist.push_back(asmLineCount);
+				tempicg << "\tJMP " << endl;
+				asmLineCount++;
+				$5->falselist.push_back(asmLineCount);
+			}	
 			else{
-				$$->setDType("INT");
+				tempicg << "\tPUSH AX" << endl;
+				asmLineCount++;
 			}
-
 			
-			newLabel();
-			tempicg << "\tPOP AX" << endl;
-			asmLineCount++;
-			tempicg << "\tCMP AX, 0" << endl;
-			asmLineCount++;
-			tempicg << "\tJNE " << endl;
-			asmLineCount++;
-			$1->truelist.push_back(asmLineCount);
 
-			tempicg << "\tJMP " << endl;
-			asmLineCount++;
-			$1->falselist.push_back(asmLineCount);
-
-			tempicg << $3->label << ":" << endl;
-			asmLineCount++;
-			if($2->getName().compare("||") == 0){
-				backpatch($1->falselist, $3->label);
+			// tempicg << $3->label << ":" << endl;
+			// asmLineCount++;
+			if($3->getName().compare("||") == 0){
+				backpatch($1->falselist, $4->label);
 			}
-			else if($2->getName().compare("&&") == 0){
-				backpatch($1->truelist, $3->label);
+			else if($3->getName().compare("&&") == 0){
+				backpatch($1->truelist, $4->label);
 			}
 
-			tempicg << "\tPOP AX" << endl;
-			asmLineCount++;
-			tempicg << "\tCMP AX, 0" << endl;
-			asmLineCount++;
-			tempicg << "\tJNE " << endl;
-			asmLineCount++;
-			$4->truelist.push_back(asmLineCount);
 
-			tempicg << "\tJMP " << endl;
-			asmLineCount++;
-			$4->falselist.push_back(asmLineCount);
-
-
-			if($2->getName().compare("||") == 0){
-				for(int i = 0; i < $4->falselist.size(); i++){
-					$$->falselist.push_back($4->falselist[i]);
+			if($3->getName().compare("||") == 0){
+				for(int i = 0; i < $5->falselist.size(); i++){
+					$$->falselist.push_back($5->falselist[i]);
 				}
 
 				for(int i = 0; i < $1->truelist.size(); i++){
 					$$->truelist.push_back($1->truelist[i]);
 				}
 
-				for(int i = 0; i < $4->truelist.size(); i++){
-					$$->truelist.push_back($4->truelist[i]);
+				for(int i = 0; i < $5->truelist.size(); i++){
+					$$->truelist.push_back($5->truelist[i]);
 				}
 			}
-			else if($2->getName().compare("&&") == 0){
-				for(int i = 0; i < $4->truelist.size(); i++){
-					$$->truelist.push_back($4->truelist[i]);
+			else if($3->getName().compare("&&") == 0){
+				for(int i = 0; i < $5->truelist.size(); i++){
+					$$->truelist.push_back($5->truelist[i]);
 				}
 
 				for(int i = 0; i < $1->falselist.size(); i++){
 					$$->falselist.push_back($1->falselist[i]);
 				}
 
-				for(int i = 0; i < $4->falselist.size(); i++){
-					$$->falselist.push_back($4->falselist[i]);
+				for(int i = 0; i < $5->falselist.size(); i++){
+					$$->falselist.push_back($5->falselist[i]);
 				}
 			}
 
 
-			string s = newLabel();
-			backpatch($$->truelist, s);
-			tempicg << "\tMOV AX, 1" << endl;
+			//string s = newLabel();
+			//backpatch($$->truelist, s);
+			
+			/*tempicg << "\tMOV AX, 1" << endl;
 			asmLineCount++;
 			tempicg << "\tJMP " << endl;
 			asmLineCount++;
 			$$->nextlist.push_back(asmLineCount);
 
-			s = newLabel();
-			backpatch($$->falselist, s);
+			//s = newLabel();
+			//backpatch($$->falselist, s);
 			tempicg << "\tMOV AX, 0" << endl;
-			asmLineCount++;
+			asmLineCount++;*/
+
+			$$->asmFlag = 2;
 		}	
 		;
 			
@@ -1407,6 +1518,16 @@ rel_expression	: simple_expression {
 			for(int i = 0; i < $1->nextlist.size(); i++){
 				$$->nextlist.push_back($1->nextlist[i]);
 			}
+
+			for(int i = 0; i < $1->truelist.size(); i++){
+				$$->truelist.push_back($1->truelist[i]);
+			}
+
+			for(int i = 0; i < $1->falselist.size(); i++){
+				$$->falselist.push_back($1->falselist[i]);
+			}
+			
+			$$->asmFlag = $1->asmFlag;
 		}
 		| simple_expression RELOP simple_expression{
 			logout << "rel_expression	: simple_expression RELOP simple_expression	  " << endl;
@@ -1431,7 +1552,9 @@ rel_expression	: simple_expression {
 				$$->setDType("INT");
 			}
 
-			newLabel();
+			
+
+			//newLabel();
 			//asmLineCount++;
 			tempicg << "\tPOP AX" << endl;
 			asmLineCount++;
@@ -1463,18 +1586,27 @@ rel_expression	: simple_expression {
 			tempicg << "\tJMP " << endl;
 			asmLineCount++;
 			$$->falselist.push_back(asmLineCount);
-			string s = newLabel(); //L1
-			backpatch($$->truelist, s);
+
+			$$->asmFlag = 1;
+			//string s = newLabel(); //L1
+			//backpatch($$->truelist, s);
 			//s = newLabel(); //L2
-			tempicg << "\tMOV AX, 1" << endl;
+
+			//$$->asmFlag = 1;
+
+			/*tempicg << "\tMOV AX, 1" << endl;
 			asmLineCount++;
 			tempicg << "\tJMP " << endl;
 			asmLineCount++;
 			$$->nextlist.push_back(asmLineCount);
-			s = newLabel();
-			backpatch($$->falselist, s);
+			//s = newLabel();
+			//backpatch($$->falselist, s);
 			tempicg << "\tMOV AX, 0" << endl;
-			asmLineCount++;
+			asmLineCount++;*/
+
+			// tempicg << "\tJMP " << endl;
+			// asmLineCount++;
+			// $$->nextlist.push_back(asmLineCount);
 			
 		}	
 		;
@@ -1502,6 +1634,16 @@ simple_expression : term {
 			for(int i = 0; i < $1->nextlist.size(); i++){
 				$$->nextlist.push_back($1->nextlist[i]);
 			}
+
+			for(int i = 0; i < $1->truelist.size(); i++){
+				$$->truelist.push_back($1->truelist[i]);
+			}
+
+			for(int i = 0; i < $1->falselist.size(); i++){
+				$$->falselist.push_back($1->falselist[i]);
+			}
+
+			$$->asmFlag = $1->asmFlag;
 		}
 		| simple_expression ADDOP term {
 			logout << "simple_expression : simple_expression ADDOP term  " << endl;
@@ -1547,6 +1689,7 @@ simple_expression : term {
 
 			tempicg << "\tPUSH AX" << endl;
 			asmLineCount++;
+			$$->asmFlag = 0;
 		}
 		;
 					
@@ -1572,6 +1715,16 @@ term :	unary_expression{
 			for(int i = 0; i < $1->nextlist.size(); i++){
 				$$->nextlist.push_back($1->nextlist[i]);
 			}
+
+			for(int i = 0; i < $1->truelist.size(); i++){
+				$$->truelist.push_back($1->truelist[i]);
+			}
+
+			for(int i = 0; i < $1->falselist.size(); i++){
+				$$->falselist.push_back($1->falselist[i]);
+			}
+
+			$$->asmFlag = $1->asmFlag;
 		}
 		|  term MULOP unary_expression{
 			logout << "term :	term MULOP unary_expression " << endl;
@@ -1632,6 +1785,7 @@ term :	unary_expression{
 				tempicg << "\tPUSH AX" << endl;
 				asmLineCount += 2;
 			}
+			$$->asmFlag = 0;
 		}
 		;
 
@@ -1652,17 +1806,18 @@ unary_expression : ADDOP unary_expression{
 			checkZero($$, $1);
 
 			if($1->getName().compare("-") == 0){
-				newLabel();
+				//newLabel();
 				tempicg << "\tPOP AX" << endl;
 				tempicg << "\tNEG AX" << endl;
 				asmLineCount += 2;
-				tempicg << "PUSH AX" << endl;
+				tempicg << "\tPUSH AX" << endl;
+				asmLineCount++;
 			}
 
 			else if($1->getName().compare("+") == 0){
-				newLabel();
+				//newLabel();
 				tempicg << "\tPOP AX" << endl;
-				tempicg << "PUSH AX" << endl;
+				tempicg << "\tPUSH AX" << endl;
 				asmLineCount += 2;
 			}
 
@@ -1685,16 +1840,24 @@ unary_expression : ADDOP unary_expression{
 			}
 			checkZero($$, $2);
 
-			newLabel();
-			tempicg << "\tPOP AX" << endl;
-			tempicg << "\tCMP AX, 0" << endl;
-			asmLineCount += 2;
-			tempicg << "\tJE " << endl;
-			asmLineCount++;
-			$2->falselist.push_back(asmLineCount);
-			tempicg << "\tJMP " << endl;
-			asmLineCount++;
-			$2->truelist.push_back(asmLineCount);
+			//newLabel();
+			if($2->asmFlag == 0){
+				string s = newLabel();
+				tempicg << "\tPOP AX" << endl;
+				tempicg << "\tCMP AX, 0" << endl;
+				asmLineCount += 2;
+				tempicg << "\tJNE " << endl;
+				asmLineCount++;
+				$2->truelist.push_back(asmLineCount);
+				tempicg << "\tJMP " << endl;
+				asmLineCount++;
+				$2->falselist.push_back(asmLineCount);				
+			}
+			else{
+				tempicg << "\tPUSH AX" << endl;
+				asmLineCount++;
+			}
+			
 
 			for(int i = 0; i < $2->truelist.size(); i++){
 				$$->falselist.push_back($2->truelist[i]);
@@ -1704,18 +1867,20 @@ unary_expression : ADDOP unary_expression{
 				$$->truelist.push_back($2->falselist[i]);
 			}
 
-			string s = newLabel();
-			backpatch($$->falselist, s);
-			tempicg << "\tMOV AX, 0" << endl;
-			asmLineCount++;
-			tempicg << "\tJMP " << endl;
-			asmLineCount++;
-			$$->nextlist.push_back(asmLineCount);
+			$$->asmFlag = 2; //NOT
 
-			s = newLabel();
-			backpatch($$->truelist, s);
-			tempicg << "\tMOV AX, 1" << endl;
-			asmLineCount++;
+			// string s = newLabel();
+			// backpatch($$->falselist, s);
+			// tempicg << "\tMOV AX, 0" << endl;
+			// asmLineCount++;
+			// tempicg << "\tJMP " << endl;
+			// asmLineCount++;
+			// $$->nextlist.push_back(asmLineCount);
+
+			// s = newLabel();
+			// backpatch($$->truelist, s);
+			// tempicg << "\tMOV AX, 1" << endl;
+			// asmLineCount++;
 
 		}
 		| factor {
@@ -1737,6 +1902,7 @@ unary_expression : ADDOP unary_expression{
 
 			$$->setType($1->getType());
 			$$->asmName = $1->asmName;
+			$$->asmFlag = $1->asmFlag;
 		}
 		;
 	
@@ -1759,6 +1925,7 @@ factor	: variable {
 			tempicg << "\tMOV AX, " << $1->asmName << endl;
 			tempicg << "\tPUSH AX" << endl;
 			asmLineCount += 2;
+			$$->asmFlag = 0;
 		}
 
 		| ID LPAREN argument_list RPAREN{
@@ -1831,6 +1998,7 @@ factor	: variable {
 			}
 
 			checkZero($$, $2);
+			$$->asmFlag = $2->asmFlag;
 			
 		}
 		| CONST_INT {
@@ -1853,6 +2021,7 @@ factor	: variable {
 			asmLineCount += 2;
 			//$$->setType($1->getType());
 			$$->asmName = $1->getName();
+			$$->asmFlag = 0;
 		}
 		| CONST_FLOAT{
 			logout << "factor	: CONST_FLOAT   " << endl;
@@ -1963,6 +2132,8 @@ arguments : arguments COMMA logic_expression{
 			argList.push_back(temp);
 		}
 		;
+
+
  
 
 %%

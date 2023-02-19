@@ -27,6 +27,7 @@ public:
     int stackOffset;
     int globalFlag;
     string asmName;
+    int asmFlag; //for determining logic/relop expr 
 
     SymbolInfo(){
         this->setName("null");
