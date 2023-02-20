@@ -87,6 +87,7 @@ string newLabel(){
 void backpatch(vector<int> v, string s){
 	for(int i = 0; i < v.size(); i++){
 		umap[v[i]] = s;
+		cout << v[i] << " - " << s << endl;
 	}
 }
 
@@ -609,23 +610,24 @@ parameter_list  : parameter_list COMMA type_specifier ID{
  		;
 
  		
-compound_statement : LCURL {table1.enterScope(id++); insertParams();} statements RCURL{
+compound_statement : LCURL {table1.enterScope(id++); insertParams();} statements M RCURL{
 			logout << "compound_statement : LCURL statements RCURL  " << endl;
 
 			$$ = new SymbolInfo("compound_statement", "LCURL statements RCURL");
-			$$->children.push_back($1);
-			$$->children.push_back($3);
-			$$->children.push_back($4);
-			$$->setStart($1->getStart());
-			$$->setFinish($4->getFinish());
-			$$->sentence += $$->getName() + " : " + $$->getType();
+			// $$->children.push_back($1);
+			// $$->children.push_back($3);
+			// $$->children.push_back($4);
+			// $$->setStart($1->getStart());
+			// $$->setFinish($4->getFinish());
+			// $$->sentence += $$->getName() + " : " + $$->getType();
 
-			table1.printAll(logout);
-			table1.exitScope();
+			// table1.printAll(logout);
+			// table1.exitScope();
 
-			for(int i = 0; i < $3->nextlist.size(); i++){
-				$$->nextlist.push_back($3->nextlist[i]);
-			}
+			backpatch($3->nextlist, $4->label);
+			// for(int i = 0; i < $3->nextlist.size(); i++){
+			// 	$$->nextlist.push_back($3->nextlist[i]);
+			// }
 		}
  		| LCURL {table1.enterScope(id++); insertParams();} RCURL{
 			logout << "compound_statement : LCURL RCURL  " << endl;
@@ -909,13 +911,14 @@ M 	: 	{
 		;	   
 
 N   :   {
+			$$ = new SymbolInfo();
 			tempicg << "\tJMP " << endl;
 			asmLineCount++;
 			$$->nextlist.push_back(asmLineCount);
 		}
 		;
 
-statements : statement{
+statements : statement {
 			logout << "statements : statement  " << endl;
 
 			$$ = new SymbolInfo("statements", "statement");
@@ -934,8 +937,10 @@ statements : statement{
 			}
 		}
 		| statements M statement{
+			$$ = new SymbolInfo("statements", "statements M statement");
 			logout << "statements : statements statement  " << endl;
 
+			cout << "M = " << $2->label << endl;
 			backpatch($1->nextlist, $2->label);
 			// tempicg << $2->label << ":" << endl;
 			// asmLineCount++;
@@ -944,7 +949,17 @@ statements : statement{
 				$$->nextlist.push_back($3->nextlist[i]);
 			}
 
-			
+			for(int i = 0; i < $3->truelist.size(); i++){
+				$$->truelist.push_back($3->truelist[i]);
+			}
+
+			for(int i = 0; i < $3->falselist.size(); i++){
+				$$->falselist.push_back($3->falselist[i]);
+			}
+
+			for(int i = 0; i < $$->nextlist.size(); i++){
+				cout << "statements next " << i << " " << $$->nextlist[i] << endl;
+			}
 		}
 	   ;
 	   
@@ -1000,13 +1015,13 @@ statement : var_declaration{
 				$$->nextlist.push_back($1->nextlist[i]);
 			}
 
-			for(int i = 0; i < $1->truelist.size(); i++){
-				$$->truelist.push_back($1->truelist[i]);
-			}
+			// for(int i = 0; i < $1->truelist.size(); i++){
+			// 	$$->truelist.push_back($1->truelist[i]);
+			// }
 
-			for(int i = 0; i < $1->falselist.size(); i++){
-				$$->falselist.push_back($1->falselist[i]);
-			}
+			// for(int i = 0; i < $1->falselist.size(); i++){
+			// 	$$->falselist.push_back($1->falselist[i]);
+			// }
 		}
 		| FOR LPAREN expression_statement expression_statement expression RPAREN statement{
 			logout << "statement : FOR LPAREN expression_statement expression_statement expression RPAREN statement" << endl;
@@ -1021,6 +1036,9 @@ statement : var_declaration{
 			$$ = new SymbolInfo("statement", "IF LPAREN expression RPAREN statement");	
 			
 			//$6->label = $5->label;
+			// if($6->asmFlag == 1 || $6->asmFlag == 2){
+			// 	$6->nextlist.push_back(asmLineCount);
+			// }
 
 			backpatch($3->truelist, $5->label);
 			for(int i = 0; i < $3->falselist.size(); i++){
@@ -1031,6 +1049,10 @@ statement : var_declaration{
 				$$->nextlist.push_back($6->nextlist[i]);
 			} 
 
+			for(int i = 0; i < $$->nextlist.size(); i++){
+				cout << "if next " << i << $$->nextlist[i] << endl;
+			}
+
 		}
 		| IF LPAREN expression RPAREN M statement ELSE N M statement{
 			logout << "statement : IF LPAREN expression RPAREN statement ELSE statement " << endl;
@@ -1039,7 +1061,10 @@ statement : var_declaration{
 
 			backpatch($3->truelist, $5->label);
 			backpatch($3->falselist, $9->label);
-			
+			//if($6->asmFlag == 1 || $6->asmFlag == 2){
+			//$6->nextlist.push_back(asmLineCount);
+			//}
+			//$3->nextlist.push_back(asmLineCount);
 
 			for(int i = 0; i < $6->nextlist.size(); i++){
 				$$->nextlist.push_back($6->nextlist[i]);
@@ -1054,20 +1079,31 @@ statement : var_declaration{
 			}
 			
 		}
-		| WHILE LPAREN expression RPAREN statement{
+		| WHILE M LPAREN expression RPAREN M statement{
 			logout << "statement : WHILE LPAREN expression RPAREN statement" << endl;
 
 			$$ = new SymbolInfo("statement", "WHILE LPAREN expression RPAREN statement");
-			$$->children.push_back($1);
-			$$->children.push_back($2);
-			$$->children.push_back($3);
-			$$->children.push_back($4);
-			$$->children.push_back($5);
-			$$->setStart($1->getStart());
-			$$->setFinish($5->getFinish());
-			$$->sentence += $$->getName() + " : " + $$->getType();
+			// $$->children.push_back($1);
+			// $$->children.push_back($2);
+			// $$->children.push_back($3);
+			// $$->children.push_back($4);
+			// $$->children.push_back($5);
+			// $$->setStart($1->getStart());
+			// $$->setFinish($5->getFinish());
+			// $$->sentence += $$->getName() + " : " + $$->getType();
 			
-			voidError($$, $3);
+			// voidError($$, $3);
+
+			backpatch($7->nextlist, $2->label);
+			backpatch($4->truelist, $6->label);
+
+			for(int i = 0; i < $4->falselist.size(); i++){
+				$$->nextlist.push_back($4->falselist[i]);
+			}
+
+			tempicg << "\tJMP " << $2->label << endl;
+			asmLineCount++;
+
 		}
 		| PRINTLN LPAREN ID RPAREN SEMICOLON{
 			logout << "statement : PRINTLN LPAREN ID RPAREN SEMICOLON" << endl;
@@ -1100,6 +1136,10 @@ statement : var_declaration{
 			//backpatch($$->nextlist, label);
 			tempicg << "\tMOV AX, " << temp->asmName << "\n\tCALL print_output\n\tCALL new_line\n";
 			asmLineCount += 3;
+			
+			for(int i = 0; i < $$->nextlist.size(); i++){
+				cout << "print next " << i << $$->nextlist[i] << endl;
+			}
 			
 		}
 		| RETURN expression SEMICOLON{
@@ -1409,10 +1449,10 @@ logic_expression : rel_expression 	{
 					asmLineCount++;
 					$1->falselist.push_back(asmLineCount);
 				}
-				else{
-					tempicg << "\tPUSH AX" << endl;
-					asmLineCount++;
-				}
+				// else{
+				// 	tempicg << "\tPUSH AX" << endl;
+				// 	asmLineCount++;
+				// }
 			} LOGICOP M rel_expression {
 			logout << "logic_expression : rel_expression LOGICOP rel_expression 	 	 " << endl;
 			$$ = new SymbolInfo("logic_expression", "rel_expression LOGICOP rel_expression");
@@ -1435,10 +1475,10 @@ logic_expression : rel_expression 	{
 				asmLineCount++;
 				$5->falselist.push_back(asmLineCount);
 			}	
-			else{
-				tempicg << "\tPUSH AX" << endl;
-				asmLineCount++;
-			}
+			// else{
+			// 	tempicg << "\tPUSH AX" << endl;
+			// 	asmLineCount++;
+			// }
 			
 
 			// tempicg << $3->label << ":" << endl;
