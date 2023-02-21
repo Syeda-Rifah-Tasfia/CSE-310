@@ -33,9 +33,12 @@ vector<pair<string, int>> paramListSizes;
 unordered_map<int, string> umap;
 
 int globalOffset = 0;
+int paramOffset = 4;
 int labelCount = 1;
 int asmLineCount = 0;
+int paramCount = 0;
 int simpleFlag = 0;
+int mainFlag = 0;
 int ifFor = 0;
 string label;
 
@@ -67,6 +70,10 @@ void insertParams(){
 				if(s->params[i].getDType().compare("VOID") == 0){
 					s->params[i].setVoidFlag(1);
 				}
+				SymbolInfo *temp = table1.LookupCurr(s->params[i].getName());
+				temp->stackOffset = paramOffset;
+				paramOffset += 2;
+				temp->asmName = "[BP + " + to_string(temp->stackOffset) + "]";
 			}
 			else{
 				error << "Line# " << line_count-1 << ": Redefinition of parameter '" << s->params[i].getName() << "'" << endl;
@@ -427,6 +434,16 @@ func_definition : type_specifier ID LPAREN parameter_list RPAREN {
 					}
 				}
 		}
+
+		SymbolInfo *temp1 = table1.Lookup($2->getName()); 
+		paramCount = temp1->params.size();
+		// 	for(int i = 0; i < temp1->params.size(); i++){
+		// 		SymbolInfo *tempP = &temp1->params[i];
+		// 		tempP->stackOffset = paramOffset;
+		// 		paramOffset += 2;
+		// 		tempP->asmName = "[BP + " + to_string(tempP->stackOffset) + "]";
+		// 	}
+
 		tempicg << $2->getName() << " PROC" << endl;
 		asmLineCount++;
 		if($2->getName().compare("main") == 0){
@@ -437,34 +454,38 @@ func_definition : type_specifier ID LPAREN parameter_list RPAREN {
 		tempicg << "\tPUSH BP\n\tMOV BP, SP" << endl;
 		asmLineCount++;
 		asmLineCount++;
+
+		
 	} compound_statement{
 			logout << "func_definition : type_specifier ID LPAREN parameter_list RPAREN compound_statement " << endl;
 			
 
 			$$ = new SymbolInfo("func_definition", "type_specifier ID LPAREN parameter_list RPAREN compound_statement");
-			$$->children.push_back($1);
-			$$->children.push_back($2);
-			$$->children.push_back($3);
-			$$->children.push_back($4);
-			$$->children.push_back($5);
-			$$->children.push_back($7);
-			$$->setStart($1->getStart());
-			$$->setFinish($7->getFinish());
-			$$->sentence += $$->getName() + " : " + $$->getType();
+			
 
-			if($1->getVoidFlag() == 1){
-				$$->setVoidFlag(1);
-			}
-
+			tempicg << "\tMOV SP, BP" << endl;
+			asmLineCount++;
 			tempicg << "\tADD SP, " << globalOffset << endl;
 			asmLineCount++;
 			tempicg << "\tPOP BP" << endl;
 			asmLineCount++;
-			tempicg << "    MOV AX,4CH\n    INT 21H" << endl;
+			if($2->getName().compare("main") == 0){
+				tempicg << "    MOV AX,4CH\n    INT 21H" << endl;
+				asmLineCount++;
+				asmLineCount++;
+			}
+			else{
+				int x = paramCount * 2;
+				tempicg << "\tRET " << x << endl;
+				asmLineCount++;
+				paramCount = 0;
+			}
+			tempicg << $2->getName() << " ENDP" << endl;
 			asmLineCount++;
-			asmLineCount++;
-			tempicg << "\t" << $2->getName() << " ENDP" << endl;
-			asmLineCount++;
+			globalOffset = 0;
+			paramOffset = 4;
+
+			
 		}
 		| type_specifier ID LPAREN RPAREN {
 			bool b = checkTable($2); 
@@ -505,10 +526,11 @@ func_definition : type_specifier ID LPAREN parameter_list RPAREN {
 			tempicg << $2->getName() << " PROC" << endl;
 			asmLineCount++;
 			if($2->getName().compare("main") == 0){
-			tempicg << "\tMOV AX, @DATA\n\tMOV DS, AX" << endl;
-			asmLineCount++;
-			asmLineCount++;
-		}
+				mainFlag = 1;
+				tempicg << "\tMOV AX, @DATA\n\tMOV DS, AX" << endl;
+				asmLineCount++;
+				asmLineCount++;
+			}
 			tempicg << "\tPUSH BP\n\tMOV BP, SP" << endl;
 			asmLineCount++;
 			asmLineCount++;
@@ -530,11 +552,26 @@ func_definition : type_specifier ID LPAREN parameter_list RPAREN {
 			}
 
 			//tempicg << $2->getName() << " PROC" << endl;
-			tempicg << "    MOV AX,4CH\n    INT 21H" << endl;
+
+			//newLabel();
+			tempicg << "\tMOV SP, BP" << endl;
 			asmLineCount++;
+			tempicg << "\tADD SP, " << globalOffset << endl;
 			asmLineCount++;
-			tempicg << "\t" << $2->getName() << " ENDP" << endl;
+			tempicg << "\tPOP BP" << endl;
 			asmLineCount++;
+			if($2->getName().compare("main") == 0){
+				tempicg << "    MOV AX,4CH\n    INT 21H" << endl;
+				asmLineCount++;
+				asmLineCount++;
+			}
+			else {
+				tempicg << "\tRET" << endl;
+				asmLineCount++;		
+			}
+			tempicg << $2->getName() << " ENDP" << endl;
+			asmLineCount++;
+			globalOffset = 0;
 		}
  		;				
 
@@ -594,6 +631,9 @@ parameter_list  : parameter_list COMMA type_specifier ID{
 			$$->setFinish($2->getFinish());
 			$$->sentence += $$->getName() + " : " + $$->getType();
 			//$$->sentence += $$->getName() + " : " + $1->getName() + " " + $2->getName();
+
+			//paramOffset
+			//SymbolInfo *temp1 = temp;
 		}
 		| type_specifier{
 			logout << "parameter_list  : type_specifier" << endl;
@@ -795,6 +835,33 @@ declaration_list : declaration_list COMMA ID{
 			
 			$3->setType1("ARRAY");
 			$$->setDType($3->getDType());
+			$3->arraySize = stoi($5->getName());
+			
+			cout << "Arraysize = " << $3->arraySize << endl;
+
+			if(table1.getCurrScopeID() == 1){
+				icg << "\t" << $3->getName() << " DW " << $5->getName() << " DUP (0000H)" << endl;
+				SymbolInfo *temp1 = table1.LookupCurr($3->getName());
+				temp1->globalFlag = 1;
+				$3->globalFlag = 1;
+				temp1->asmName = $3->getName();
+				temp1->arraySize = $3->arraySize;
+			}
+			else{
+				SymbolInfo *temp1 = table1.LookupCurr($3->getName());
+				int x = stoi($5->getName());
+				globalOffset += x * 2;
+				temp1->stackOffset = globalOffset;
+				tempicg << "\tSUB SP, " << temp1->stackOffset << endl;
+				asmLineCount++;
+				string s = "[BP-" + to_string(temp1->stackOffset) + "]";
+				temp1->asmName = s;
+				//temp1->setName(s);
+				//$3->setName(s);
+				temp1->globalFlag = 0;
+				$3->globalFlag = 0;
+				temp1->arraySize = $3->arraySize;
+			}
 		}
 		| ID{
 			bool b = checkTable($1);
@@ -885,6 +952,30 @@ declaration_list : declaration_list COMMA ID{
 			
 			$3->setType1("ARRAY");
 			$$->setDType($1->getDType());
+			$1->arraySize = stoi($3->getName());
+			
+
+			if(table1.getCurrScopeID() == 1){
+				icg << "\t" << $1->getName() << " DW " << $3->getName() << " DUP (0000H)" << endl;
+				SymbolInfo *temp1 = table1.LookupCurr($1->getName());
+				temp1->globalFlag = 1;
+				$1->globalFlag = 1;
+				temp1->asmName = $1->getName();
+				temp1->arraySize = $1->arraySize;
+			}
+			else{
+				SymbolInfo *temp1 = table1.LookupCurr($1->getName());
+				int x = stoi($3->getName());
+				globalOffset += x * 2;
+				temp1->stackOffset = globalOffset;
+				tempicg << "\tSUB SP, " << temp1->stackOffset << endl;
+				asmLineCount++;
+				string s = "[BP-" + to_string(temp1->stackOffset) + "]";
+				temp1->asmName = s;
+				temp1->globalFlag = 0;
+				$1->globalFlag = 0;
+				temp1->arraySize = $1->arraySize;
+			}
 		}
 
 		//do these enter the tree? no
@@ -1178,19 +1269,27 @@ statement : var_declaration{
 			}
 			
 		}
-		| RETURN expression SEMICOLON{
+		| M RETURN expression SEMICOLON{
 			logout << "statement : RETURN expression SEMICOLON" << endl;
 			
 			$$ = new SymbolInfo("statement", "RETURN expression SEMICOLON");
-			$$->children.push_back($1);
-			$$->children.push_back($2);
-			$$->children.push_back($3);
-			$$->setStart($1->getStart());
-			$$->setFinish($3->getFinish());
-			$$->sentence += $$->getName() + " : " + $$->getType();
 			
-			$$->setDType($2->getDType());
-			bool b = voidError($$, $2);
+
+			// if(paramCount != 0){
+			// 	int x = paramCount * 2;
+			// 	tempicg << "\tRET " << x << endl;
+			// 	asmLineCount++;
+			// }	
+			// else{
+			// 	if(mainFlag == 0){
+			// 		tempicg << "\tRET" << endl;
+			// 		asmLineCount++;
+			// 	}
+			// 	else{
+			// 		mainFlag = 0;
+			// 	}
+					
+			// }
 		}
 		;
 	  
@@ -1311,14 +1410,28 @@ variable : ID{
 					}
 				}
 			}
+
+			tempicg << "\tPOP AX" << endl;
+			asmLineCount++;
+
+			if(temp->globalFlag == 1){
+				$$->asmName = $1->getName() + "[" + $3->getName() + "]";
+				$$->setType("CONST_INT");
+			}
+			else{
+				int x = temp->stackOffset/2 - temp->arraySize + stoi($3->getName()) + 1;
+				x = x * 2;
+				$$->asmName = "[BP - " + to_string(x) + "]";
+				$$->setType("CONST_INT");
+			}
 		}
 	 	;
 
 checkbool : {
 	$$ = new SymbolInfo();
 	if(simpleFlag == 1){
-		tempicg << "\tPOP AX" << endl;
-		asmLineCount++;
+		// tempicg << "\tPOP AX" << endl;
+		// asmLineCount++;
 		tempicg << "\tCMP AX, 0" << endl;
 		asmLineCount++;
 		tempicg << "\tJE " << endl;
@@ -2092,6 +2205,11 @@ factor	: variable {
 				}
 				}
 			}
+
+			tempicg << "\tCALL " << $1->getName() << endl;
+			asmLineCount++;
+			tempicg << "\tPUSH AX" << endl;
+			asmLineCount++;
 		}
 		| LPAREN expression RPAREN{
 			logout << "factor	: LPAREN expression RPAREN   " << endl;
@@ -2171,7 +2289,7 @@ factor	: variable {
 			asmLineCount++;
 			tempicg << "\tMOV " << $1->asmName << ", AX" << endl;
 			asmLineCount++;
-			tempicg << "\tPUSH AX" << endl;
+			tempicg << "\tPOP AX" << endl;
 			asmLineCount++;
 
 			$$->asmFlag = 0;
@@ -2197,7 +2315,7 @@ factor	: variable {
 			asmLineCount++;
 			tempicg << "\tMOV " << $1->asmName << ", AX" << endl;
 			asmLineCount++;
-			tempicg << "\tPUSH AX" << endl;
+			tempicg << "\tPOP AX" << endl;
 			asmLineCount++;
 
 			$$->asmFlag = 0;
@@ -2269,7 +2387,7 @@ int main(int argc,char *argv[])
 
 	
 	table1.enterScope(id++);
-	//logout.open("log.text");
+	logout.open("log.text");
 	//parsetree.open("parsetree.txt");
 	//error.open("error.txt");
     icg.open("code.asm");
@@ -2286,6 +2404,7 @@ int main(int argc,char *argv[])
 	
 	tempicg << funcs;
 	tempicg << "END main" << endl;
+	table1.printAll(logout);
 	//asmLineCount += 2;
 
 	/* ifstream obj("temp.asm", ios::in);
@@ -2294,8 +2413,8 @@ int main(int argc,char *argv[])
 		icg << line << endl;
 	}  */
 	fclose(yyin);
-	/* logout.close();
-	parsetree.close();
+	logout.close();
+	/*parsetree.close();
 	error.close(); */
 
 	ifstream obj("temp.asm");

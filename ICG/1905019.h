@@ -23,6 +23,7 @@ public:
     vector<int> falselist;
     vector<int> nextlist;
     string label;
+    int arraySize;
     int paramListSize;
     int stackOffset;
     int globalFlag;
@@ -361,7 +362,7 @@ public:
                 o << "\t" << i + 1 << "--> ";
                 while (a != nullptr) {
                     if(a->getType1() == "null"){
-                        o << "<" << a->getName() << ", " << a->getDType() << "> ";
+                        o << "<" << a->getName() << ", " << a->getDType() << ", " << a->stackOffset << "> ";
                         
                         // if(a->getDType() == "null"){
                         //     o << "<" << a->getName() << ", " << a->getType() << "> ";    
@@ -370,7 +371,7 @@ public:
                         //}
                     }
                     else {
-                        o << "<" << a->getName() << ", " << a->getType1() << ", " << a->getDType() << "> ";
+                        o << "<" << a->getName() << ", " << a->getType1() << ", " << a->getDType() << ", " << a->stackOffset << "> ";
                         
                         // if(a->getDType() == "null"){
                         //     o << "<" << a->getName() << ", " << a->getType1() << ", " << a->getType() << "> ";    
