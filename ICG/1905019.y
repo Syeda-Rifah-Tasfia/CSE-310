@@ -23,6 +23,7 @@ ofstream logout;
 ofstream parsetree;
 ofstream error;
 ofstream icg;
+ofstream opticg;
 //("code.asm", ios::in | ios::out | ios::app)
 ofstream tempicg;
 extern int line_count;
@@ -41,6 +42,8 @@ int simpleFlag = 0;
 int mainFlag = 0;
 int ifFor = 0;
 string label;
+string retLabel;
+vector<int> retFlag;
 
 string funcs = "new_line proc\n\tpush ax\n\tpush dx\n\tmov ah,2\n\tmov dl,cr\n\tint 21h\n\tmov ah,2\n\tmov dl,lf\n\tint 21h\n\tpop dx\n\tpop ax\n\tret\nnew_line endp\nPRINT_OUTPUT PROC\n\tPUSH AX\n\tPUSH BX\n\tPUSH CX\n\tPUSH DX\n\n\t; dividend has to be in DX:AX\n\t; divisor in source, CX\n\tMOV CX, 10\n\tXOR BL, BL ; BL will store the length of number\n\tCMP AX, 0\n\tJGE STACK_OP ; number is positive\n\tMOV BH, 1; number is negative\n\tNEG AX\n\nSTACK_OP:\n\tXOR DX, DX\n\tDIV CX\n\t; quotient in AX, remainder in DX\n\tPUSH DX\n\tINC BL ; len++\n\tCMP AX, 0\n\tJG STACK_OP\n\n\tMOV AH, 02\n\tCMP BH, 1 ; if negative, print a '-' sign first\n\tJNE PRINT_LOOP\n    MOV DL, '-'\n\tINT 21H\n\nPRINT_LOOP:\n\tPOP DX\n\tXOR DH, DH\n\tADD DL, '0'\n\tINT 21H\n\tDEC BL\n\tCMP BL, 0\n\tJG PRINT_LOOP\n\n\tPOP DX\n\tPOP CX\n\tPOP BX\n\tPOP AX\n\tRET\nPRINT_OUTPUT ENDP\n";
 
@@ -80,6 +83,13 @@ void insertParams(){
 				err_count++;
 				break;
 			}
+		}
+
+		for(int i = 0; i < s->params.size(); i++){
+			SymbolInfo *temp = table1.LookupCurr(s->params[i].getName());
+			paramOffset -= 2;
+			temp->stackOffset = paramOffset;
+			temp->asmName = "[BP + " + to_string(temp->stackOffset) + "]";
 		}
 		s->clearParam();
 	}
@@ -463,6 +473,10 @@ func_definition : type_specifier ID LPAREN parameter_list RPAREN {
 			$$ = new SymbolInfo("func_definition", "type_specifier ID LPAREN parameter_list RPAREN compound_statement");
 			
 
+			retLabel = newLabel();
+			backpatch(retFlag, retLabel);
+			retFlag.clear();
+			cout << "retLabel " << retLabel << endl;
 			tempicg << "\tMOV SP, BP" << endl;
 			asmLineCount++;
 			tempicg << "\tADD SP, " << globalOffset << endl;
@@ -553,7 +567,10 @@ func_definition : type_specifier ID LPAREN parameter_list RPAREN {
 
 			//tempicg << $2->getName() << " PROC" << endl;
 
-			//newLabel();
+			retLabel = newLabel();
+			backpatch(retFlag, retLabel);
+			retFlag.clear();
+			cout << "retLabel " << retLabel << endl;
 			tempicg << "\tMOV SP, BP" << endl;
 			asmLineCount++;
 			tempicg << "\tADD SP, " << globalOffset << endl;
@@ -664,7 +681,7 @@ compound_statement : LCURL {table1.enterScope(id++); insertParams();} statements
 			// $$->sentence += $$->getName() + " : " + $$->getType();
 
 			// table1.printAll(logout);
-			// table1.exitScope();
+			table1.exitScope();
 
 			backpatch($3->nextlist, $4->label);
 			// for(int i = 0; i < $3->nextlist.size(); i++){
@@ -1269,11 +1286,12 @@ statement : var_declaration{
 			}
 			
 		}
-		| M RETURN expression SEMICOLON{
+		|RETURN expression SEMICOLON{
 			logout << "statement : RETURN expression SEMICOLON" << endl;
 			
 			$$ = new SymbolInfo("statement", "RETURN expression SEMICOLON");
 			
+
 
 			// if(paramCount != 0){
 			// 	int x = paramCount * 2;
@@ -1290,6 +1308,12 @@ statement : var_declaration{
 			// 	}
 					
 			// }
+			cout << "rule retLabel " << retLabel << endl;
+			if(mainFlag == 0){
+				tempicg << "\tJMP " << endl;
+				asmLineCount++;
+				retFlag.push_back(asmLineCount);
+			}
 		}
 		;
 	  
@@ -1349,7 +1373,7 @@ variable : ID{
 			$$->setFinish($1->getFinish());
 			$$->sentence += $$->getName() + " : " + $$->getType();
 
-			// lokup in st, if found, $$->dType = $1->dType
+			// lookup in st, if found, $$->dType = $1->dType
 			SymbolInfo *temp = table1.Lookup($1->getName());
 			if(temp == nullptr){
 				error << "Line# " << line_count << ": Undeclared variable '" << $1->getName() <<"'" << endl;
@@ -1415,7 +1439,13 @@ variable : ID{
 			asmLineCount++;
 
 			if(temp->globalFlag == 1){
-				$$->asmName = $1->getName() + "[" + $3->getName() + "]";
+				tempicg << "\tMOV SI, AX" << endl;
+				asmLineCount++;
+				tempicg << "\tMOV AX, " << $1->getName() << "[SI]" << endl;
+				$$->asmName = $1->getName() + "[SI]";
+				asmLineCount++;
+				tempicg << "\tPUSH AX" << endl;
+				asmLineCount++;
 				$$->setType("CONST_INT");
 			}
 			else{
@@ -2392,6 +2422,7 @@ int main(int argc,char *argv[])
 	//error.open("error.txt");
     icg.open("code.asm");
 	tempicg.open("temp.asm");
+	opticg.open("optimized_code.asm");
 
 	string str = ".MODEL SMALL\n.STACK 1000H\n.Data";
 	icg << str << endl;
@@ -2431,8 +2462,27 @@ int main(int argc,char *argv[])
 
 	//icg << obj.rdbuf();
 
+
+	ifstream obj1("optimized_code.asm");
+	//string temp;
+	/* vector<string> temp; 
+	while(getline(obj1, line)){
+		temp.push_back(line);
+	}
+	opticg << temp[0] << endl; */
+	/* for(int i = 1; i < temp.size(); i++){
+		if(temp[i-1].compare("PUSH AX") == 0 && temp[i].compare("POP AX") == 0){
+			temp.erase(temp.begin() + i);
+			int x = i - 1;
+			temp.erase(temp.begin() + x);
+		}
+		else{
+			opticg << temp[i] << endl;
+		}
+	} */
     icg.close();
 	tempicg.close();
+	opticg.close();
 	/* fclose(fp3); */
 	
 	/* ifstream ifile("code.asm", ios::in);
