@@ -35,6 +35,8 @@ unordered_map<int, string> umap;
 int globalOffset = 0;
 int labelCount = 1;
 int asmLineCount = 0;
+int simpleFlag = 0;
+int ifFor = 0;
 string label;
 
 string funcs = "new_line proc\n\tpush ax\n\tpush dx\n\tmov ah,2\n\tmov dl,cr\n\tint 21h\n\tmov ah,2\n\tmov dl,lf\n\tint 21h\n\tpop dx\n\tpop ax\n\tret\nnew_line endp\nPRINT_OUTPUT PROC\n\tPUSH AX\n\tPUSH BX\n\tPUSH CX\n\tPUSH DX\n\n\t; dividend has to be in DX:AX\n\t; divisor in source, CX\n\tMOV CX, 10\n\tXOR BL, BL ; BL will store the length of number\n\tCMP AX, 0\n\tJGE STACK_OP ; number is positive\n\tMOV BH, 1; number is negative\n\tNEG AX\n\nSTACK_OP:\n\tXOR DX, DX\n\tDIV CX\n\t; quotient in AX, remainder in DX\n\tPUSH DX\n\tINC BL ; len++\n\tCMP AX, 0\n\tJG STACK_OP\n\n\tMOV AH, 02\n\tCMP BH, 1 ; if negative, print a '-' sign first\n\tJNE PRINT_LOOP\n    MOV DL, '-'\n\tINT 21H\n\nPRINT_LOOP:\n\tPOP DX\n\tXOR DH, DH\n\tADD DL, '0'\n\tINT 21H\n\tDEC BL\n\tCMP BL, 0\n\tJG PRINT_LOOP\n\n\tPOP DX\n\tPOP CX\n\tPOP BX\n\tPOP AX\n\tRET\nPRINT_OUTPUT ENDP\n";
@@ -217,7 +219,7 @@ void intToFloat(SymbolInfo* s0, SymbolInfo* s1, SymbolInfo* s2){
 %token<table>LOGICOP
 
 %type<table> start program unit var_declaration func_declaration func_definition type_specifier parameter_list 
-%type<table> compound_statement M N statements statement expression_statement expression logic_expression rel_expression 
+%type<table> compound_statement M N statements statement expression_statement checkbool ifFor expression logic_expression rel_expression 
 %type<table> simple_expression term unary_expression factor variable argument_list arguments non_array_subscript declaration_list
 %nonassoc LOWER_THAN_ELSE
 %nonassoc ELSE
@@ -1023,13 +1025,32 @@ statement : var_declaration{
 			// 	$$->falselist.push_back($1->falselist[i]);
 			// }
 		}
-		| FOR LPAREN expression_statement expression_statement expression RPAREN statement{
+		| FOR LPAREN ifFor expression_statement M ifFor expression_statement M expression N RPAREN M statement N{
 			logout << "statement : FOR LPAREN expression_statement expression_statement expression RPAREN statement" << endl;
 
 			$$ = new SymbolInfo("statement", "FOR LPAREN expression_statement expression_statement expression RPAREN statement");
+
+			backpatch($7->truelist, $12->label);
+			//backpatch($4->falselist, $12->label);
+
+			for(int i = 0; i < $7->falselist.size(); i++){
+				$$->nextlist.push_back($7->falselist[i]);
+			}
+
+			for(int i = 0; i < $14->nextlist.size(); i++){
+				$13->nextlist.push_back($14->nextlist[i]);
+			}
+
+			backpatch($13->nextlist, $8->label);
+
+			for(int i = 0; i < $10->nextlist.size(); i++){
+				$9->nextlist.push_back($10->nextlist[i]);
+			}
+
+			backpatch($9->nextlist, $5->label);
 			
 		}
-		| IF LPAREN expression RPAREN M statement %prec LOWER_THAN_ELSE{
+		| IF LPAREN expression checkbool RPAREN M statement %prec LOWER_THAN_ELSE{
 			//M {/*tempicg << $5->label << ":" << endl; asmLineCount++;*/ }
 			logout << "statement : IF LPAREN expression RPAREN statement " << endl;
 
@@ -1040,13 +1061,22 @@ statement : var_declaration{
 			// 	$6->nextlist.push_back(asmLineCount);
 			// }
 
-			backpatch($3->truelist, $5->label);
+			for(int i = 0; i < $4->truelist.size(); i++){
+				$3->truelist.push_back($4->truelist[i]);
+			}
+
+			for(int i = 0; i < $4->falselist.size(); i++){
+				$3->falselist.push_back($4->falselist[i]);
+			}
+
+			backpatch($3->truelist, $6->label);
+
 			for(int i = 0; i < $3->falselist.size(); i++){
 				$$->nextlist.push_back($3->falselist[i]);
 			}
 
-			for(int i = 0; i < $6->nextlist.size(); i++){
-				$$->nextlist.push_back($6->nextlist[i]);
+			for(int i = 0; i < $7->nextlist.size(); i++){
+				$$->nextlist.push_back($7->nextlist[i]);
 			} 
 
 			for(int i = 0; i < $$->nextlist.size(); i++){
@@ -1054,48 +1084,54 @@ statement : var_declaration{
 			}
 
 		}
-		| IF LPAREN expression RPAREN M statement ELSE N M statement{
+		| IF LPAREN expression checkbool RPAREN M statement ELSE N M statement{
 			logout << "statement : IF LPAREN expression RPAREN statement ELSE statement " << endl;
 
 			$$ = new SymbolInfo("statement", "IF LPAREN expression RPAREN statement ELSE statement");	
 
-			backpatch($3->truelist, $5->label);
-			backpatch($3->falselist, $9->label);
+			for(int i = 0; i < $4->truelist.size(); i++){
+				$3->truelist.push_back($4->truelist[i]);
+			}
+
+			for(int i = 0; i < $4->falselist.size(); i++){
+				$3->falselist.push_back($4->falselist[i]);
+			}
+			
+			backpatch($3->truelist, $6->label);
+			backpatch($3->falselist, $10->label);
 			//if($6->asmFlag == 1 || $6->asmFlag == 2){
 			//$6->nextlist.push_back(asmLineCount);
 			//}
 			//$3->nextlist.push_back(asmLineCount);
 
-			for(int i = 0; i < $6->nextlist.size(); i++){
-				$$->nextlist.push_back($6->nextlist[i]);
+			for(int i = 0; i < $7->nextlist.size(); i++){
+				$$->nextlist.push_back($7->nextlist[i]);
 			}
 
-			for(int i = 0; i < $8->nextlist.size(); i++){
-				$$->nextlist.push_back($8->nextlist[i]);
+			for(int i = 0; i < $9->nextlist.size(); i++){
+				$$->nextlist.push_back($9->nextlist[i]);
 			}
 
-			for(int i = 0; i < $10->nextlist.size(); i++){
-				$$->nextlist.push_back($10->nextlist[i]);
+			for(int i = 0; i < $11->nextlist.size(); i++){
+				$$->nextlist.push_back($11->nextlist[i]);
 			}
 			
 		}
-		| WHILE M LPAREN expression RPAREN M statement{
+		| WHILE M LPAREN expression checkbool RPAREN M statement{
 			logout << "statement : WHILE LPAREN expression RPAREN statement" << endl;
 
 			$$ = new SymbolInfo("statement", "WHILE LPAREN expression RPAREN statement");
-			// $$->children.push_back($1);
-			// $$->children.push_back($2);
-			// $$->children.push_back($3);
-			// $$->children.push_back($4);
-			// $$->children.push_back($5);
-			// $$->setStart($1->getStart());
-			// $$->setFinish($5->getFinish());
-			// $$->sentence += $$->getName() + " : " + $$->getType();
 			
-			// voidError($$, $3);
+			for(int i = 0; i < $5->truelist.size(); i++){
+				$4->truelist.push_back($5->truelist[i]);
+			}
 
-			backpatch($7->nextlist, $2->label);
-			backpatch($4->truelist, $6->label);
+			for(int i = 0; i < $5->falselist.size(); i++){
+				$4->falselist.push_back($5->falselist[i]);
+			}
+
+			backpatch($8->nextlist, $2->label);
+			backpatch($4->truelist, $7->label);
 
 			for(int i = 0; i < $4->falselist.size(); i++){
 				$$->nextlist.push_back($4->falselist[i]);
@@ -1196,6 +1232,12 @@ expression_statement : SEMICOLON{
 			for(int i = 0; i < $1->falselist.size(); i++){
 				$$->falselist.push_back($1->falselist[i]);
 			}
+
+			if(ifFor == 0){
+				tempicg << "\tPOP AX" << endl;
+				asmLineCount++;
+			}
+			ifFor = 0;
 		} 
 		;
 	  
@@ -1271,8 +1313,32 @@ variable : ID{
 			}
 		}
 	 	;
-	 
- expression : logic_expression	{
+
+checkbool : {
+	$$ = new SymbolInfo();
+	if(simpleFlag == 1){
+		tempicg << "\tPOP AX" << endl;
+		asmLineCount++;
+		tempicg << "\tCMP AX, 0" << endl;
+		asmLineCount++;
+		tempicg << "\tJE " << endl;
+		asmLineCount++;
+		$$->falselist.push_back(asmLineCount);
+		tempicg << "\tJMP " << endl;
+		asmLineCount++;
+		$$->truelist.push_back(asmLineCount);
+	}
+	}
+	;
+
+ifFor : {
+	$$ = new SymbolInfo();
+	ifFor = 1;
+	}
+	;
+
+ 	 
+expression : logic_expression	{
 			logout << "expression 	: logic_expression	 " << endl;
 			
 			$$ = new SymbolInfo("expression", "logic_expression");
@@ -1395,8 +1461,8 @@ variable : ID{
 			asmLineCount++;
 			tempicg << "\tPUSH AX" << endl;
 			asmLineCount++;
-			tempicg << "\tPOP AX" << endl;
-			asmLineCount++;
+			// tempicg << "\tPOP AX" << endl;
+			// asmLineCount++;
 			
 		} 	
 	   	;
@@ -1534,6 +1600,7 @@ logic_expression : rel_expression 	{
 			asmLineCount++;*/
 
 			$$->asmFlag = 2;
+			simpleFlag = 0;
 		}	
 		;
 			
@@ -1648,6 +1715,7 @@ rel_expression	: simple_expression {
 			// asmLineCount++;
 			// $$->nextlist.push_back(asmLineCount);
 			
+			simpleFlag = 0;
 		}	
 		;
 				
@@ -1730,6 +1798,7 @@ simple_expression : term {
 			tempicg << "\tPUSH AX" << endl;
 			asmLineCount++;
 			$$->asmFlag = 0;
+			simpleFlag = 1;
 		}
 		;
 					
@@ -1825,7 +1894,9 @@ term :	unary_expression{
 				tempicg << "\tPUSH AX" << endl;
 				asmLineCount += 2;
 			}
+
 			$$->asmFlag = 0;
+			simpleFlag = 1;
 		}
 		;
 
@@ -1861,6 +1932,7 @@ unary_expression : ADDOP unary_expression{
 				asmLineCount += 2;
 			}
 
+			simpleFlag = 1;
 		}  
 
 
@@ -2076,6 +2148,8 @@ factor	: variable {
 				$1->setZeroFlag(1);
 			}
 			checkZero($$, $1);
+
+			$$->asmFlag = 0;
 		}
 		| variable INCOP{
 			logout << "factor	: variable INCOP   " << endl;
@@ -2099,6 +2173,9 @@ factor	: variable {
 			asmLineCount++;
 			tempicg << "\tPUSH AX" << endl;
 			asmLineCount++;
+
+			$$->asmFlag = 0;
+			simpleFlag = 1;
 		} 
 		| variable DECOP{
 			logout << "factor	: variable DECOP   " << endl;
@@ -2122,6 +2199,9 @@ factor	: variable {
 			asmLineCount++;
 			tempicg << "\tPUSH AX" << endl;
 			asmLineCount++;
+
+			$$->asmFlag = 0;
+			simpleFlag = 1;
 		}
 		;
 	
